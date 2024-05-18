@@ -1,0 +1,395 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-05-18"
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(psych)
+library(GGally)
+library(caret)
+library(memisc)
+```
+
+
+
+
+```{r}
+heart <- read.csv("heart.csv")
+```
+
+Первичный просмотр и анализ данных
+
+```{r}
+# head(heart)
+str(heart)
+```
+
+
+# Предобработка 
+
+По умолчанию все данные считались как числовые. Приведем типы данных в соответствие с заложенным в них смысл и отразим лейблы факторных переменных.
+
+1. age - age in years
+2. sex - sex (1 = male; 0 = female)
+3. cp - chest pain type (1 = typical angina; 2 = atypical angina; 3 = non-anginal pain; 0 = asymptomatic)
+4. trestbps - resting blood pressure (in mm Hg on admission to the hospital)
+5. chol - serum cholestoral in mg/dl
+6. fbs - fasting blood sugar > 120 mg/dl (1 = true; 0 = false)
+7. restecg - resting electrocardiographic results (1 = normal; 2 = having ST-T wave abnormality; 0 = hypertrophy)
+8. thalach - maximum heart rate achieved
+9. exang - exercise induced angina (1 = yes; 0 = no)
+10. oldpeak - ST depression induced by exercise relative to rest
+11. slope - the slope of the peak exercise ST segment (2 = upsloping; 1 = flat; 0 = downsloping)
+12. ca - number of major vessels (0-3) colored by flourosopy
+13. thal - 2 = normal; 1 = fixed defect; 3 = reversable defect
+14. num - the predicted attribute - diagnosis of heart disease (angiographic disease status) (Value 0 = < diameter narrowing; Value 1 = > 50% diameter narrowing)
+
+
+```{r}
+heart <- heart %>% 
+  mutate(sex = factor(sex, levels = c(0, 1), labels = c("female", "male")),
+         cp = factor(cp,
+                             levels = c(0, 1, 2, 3),
+                             labels = c("asymptomatic", "typical angina", "atypical angina", "non-anginal pain")),
+         fbs = factor(fbs, labels = c("false", "true")),
+         restecg = factor(restecg, levels = c(0, 1, 2),
+                             labels = c("hypertrophy", "normal", "having ST-T wave abnormality")),
+         exng = factor(exng, levels = c(0, 1), labels = c("no", "yes")),
+         slp = factor(slp, labels = c("downsloping", "flat", "upsloping")),
+         thall = factor(thall, labels = c("error", "fixed defect", "normal", "reversable defect")),
+         output = factor(output)
+         ) %>%
+  dplyr::select(-caa)
+
+str(heart)
+```
+
+
+```{r}
+sum(is.na(heart))
+```
+
+
+# Эксплоративный анализ данных
+
+# Общий обзор
+
+Построим обзорный график по всем данным. Смотрим 1) на то, как прочие переменные связаны с зависимой = output 2) смотрим на распределения самих переменных 3) на связи между предикторами - корр. матрица, графики.
+
+При желании такие графики можно дополнять индивидуальными графиками по переменным.
+
+```{r}
+ggpairs(heart)
+```
+
+
+## Числовые переменные
+
+```{r}
+heart %>% 
+  dplyr::select(where(is.numeric)) %>% 
+  describe()
+```
+
+```{r}
+heart %>% 
+  dplyr::select(where(is.numeric)) %>% 
+  pivot_longer(cols = everything()) %>% 
+  mutate(name = case_match(name, 
+                           "age" ~ "Age in years",
+                           "trtbps" ~ "Resting blood pressure",
+                           "chol" ~ "Serum cholestoral in mg/dl",
+                           "thalachh" ~ "Maximum heart rate achieved",
+                           "oldpeak" ~ "ST depression induced by exercise relative to rest")) %>% 
+  ggplot(aes(x = value)) +
+  geom_density() +
+  facet_wrap(.~name, scales = "free") +
+  labs(x = "", y = "Плотность", 
+       title = "Диаграммы плотности") +
+  theme_minimal()
+```
+
+
+
+
+
+Проверим числовые переменные на нормальность распределения
+
+```{r}
+heart %>% 
+  dplyr::select(where(is.numeric)) %>% 
+  lapply(shapiro.test)
+```
+Данные не распределены нормально, что и было видно визуально.
+
+
+```{r}
+# трансформация для переменных с правосторонним скосом
+shapiro.test(log(heart$trtbps))
+shapiro.test(log(heart$chol))
+
+par(mfrow = c(2, 2))
+# изменений нет
+hist(heart$trtbps, main = "Исходные trtbps")
+hist(log(heart$trtbps), main = "После взятия логарифма")
+# изменения есть, распределение стало нормальным
+hist(heart$chol, main = "Исходные chol")
+hist(log(heart$chol), main = "После взятия логарифма")
+
+```
+
+
+```{r}
+# трансформация для переменных с левосторонним скосом
+shapiro.test(heart$thalachh^2)
+
+
+bc_trans <- BoxCoxTrans(heart$thalachh)
+transformed_data <- predict(bc_trans, heart$thalachh)
+
+par(mfrow = c(2, 2))
+hist(heart$thalachh, main = "Исходные данные")
+hist(transformed_data, main = "Трансформация Бокса-Кокса")
+hist(heart$thalachh^2, main = "Возведение в квадрат")
+
+# распределение стало нормальным
+shapiro.test(transformed_data)
+
+```
+
+С помощью T-теста проверим, есть ли различия между средними значениями числовых перемненых у людей с риском сердечного приступа и без. Нулевая гипотеза: средние равны.
+
+```{r}
+t.test(heart$age ~ heart$output)
+t.test(heart$trtbps ~ heart$output)
+t.test(heart$chol ~ heart$output)
+t.test(heart$thalachh ~ heart$output)
+t.test(heart$oldpeak ~ heart$output)
+```
+Различия есть по всем переменным, кроме холестерина (chol).
+
+По тесту Вилкоксона различия есть по всем переменным.
+
+```{r}
+heart %>% 
+  dplyr::select(where(is.numeric)) %>% 
+  lapply(function(x) {wilcox.test(x ~ heart$output)})
+```
+
+
+
+
+## Факторные переменные
+
+```{r}
+heart %>% 
+  dplyr::select(!where(is.numeric)) %>% 
+  summary()
+```
+
+
+```{r}
+heart %>% 
+  dplyr::select(where(is.factor)) %>%
+  pivot_longer(cols = everything()) %>% 
+  group_by(name, value) %>% 
+  count()  %>% 
+  mutate(name = case_match(name, 
+                           "cp" ~ "Chest Pain type",
+                           "sex" ~ "Gender",
+                           "fbs" ~ "Fasting blood sugar > 120 mg/dl",
+                           "restecg" ~ "Resting electrocardiographic results",
+                           "exng" ~ "Exercise induced angina",
+                           "slp" ~ "The slope of the peak exercise ST segment",
+                           "thall" ~ "Thall",
+                           "output" ~ "Diagnosis of heart disease")) %>%  
+  ggplot(aes(x = value, y = n)) +
+  geom_col() +
+  facet_wrap(.~name, scales = "free") +
+  labs(x = "", 
+       y = "Количество",
+       title = "Столбчатые диаграммы") +
+  theme_minimal()
+```
+
+
+
+
+Для формальной проверки независимости значений факторных переменных можно использовать тест Хи-квадрат. Нулевая гипотеза предполагает отсутствие зависимости между переменными.
+
+```{r}
+chisq.test(table(heart$output, heart$sex))
+chisq.test(table(heart$output, heart$cp))
+chisq.test(table(heart$output, heart$fbs))
+chisq.test(table(heart$output, heart$restecg))
+chisq.test(table(heart$output, heart$exng))
+chisq.test(table(heart$output, heart$slp))
+chisq.test(table(heart$output, heart$thall))
+```
+
+Различия есть.
+
+# Построение модели логистической регрессии
+
+Построим модель только с intercept
+```{r}
+const <- glm(data = heart, output ~ 1, family = binomial(link = "logit"))
+summary(const)
+```
+Построим модель со всеми переменными
+```{r}
+full <- glm(data = heart, output ~ ., family = binomial(link = "logit"))
+summary(full)
+```
+
+Подберем форму автоматически, последовательно включая переменные в модель
+```{r}
+backwards = step(full, family = binomial(link = "logit"))
+```
+
+
+
+```{r}
+bw_model <- glm(data = heart, output ~ chol + exng + trtbps + thalachh + sex + thall + oldpeak + cp, family = binomial(link = "logit"))
+summary(bw_model)
+```
+
+
+Попробуем исключить переменную thall.
+
+```{r}
+model_nothall <- glm(data = heart, output ~ chol + exng + trtbps + thalachh + sex + oldpeak + cp, family = binomial(link = "logit"))
+summary(model_nothall)
+```
+
+
+Попробуем исключить переменную chol
+```{r}
+model_nochol <- glm(data = heart, output ~ exng + trtbps + thalachh + sex + thall + oldpeak + cp, family = binomial(link = "logit"))
+summary(model_nochol)
+```
+
+Попробуем исключить обе переменные (thall и chol)
+
+```{r}
+model_nothallchol <- glm(data = heart, output ~ exng + trtbps + thalachh + sex + oldpeak + cp, family = binomial(link = "logit"))
+summary(model_nothallchol)
+```
+
+
+Подберем форму автоматически, последовательно включая переменные в модель
+```{r}
+forward = step(const, scope = formula(full), direction = "forward", family = binomial(link = "logit"))
+```
+
+```{r}
+fw_model <- glm(data = heart, output ~ slp + age + restecg + fbs, family = binomial(link = "logit"))
+summary(fw_model)
+```
+
+# Сравнение и выбор модели
+Сравним построенные модели:
+
+```{r}
+mtable(bw_model, model_nothall, model_nochol, model_nothallchol, fw_model, full, summary.stats=c("N","Deviance","AIC","Log-likelihood"))
+```
+Если не рассматривать модель, в которую включены все предикторы, лучшими моделями по метрикам являются.
+
+По метрике Deviance: model_nochol (229.416)
+По метрике AIC: model_nochol (253.416)
+По метрике Log-likelihood: model_nochol (114.708)
+
+
+Посмотрим на модели с точки зрения мер точности. Для этого получим предсказания.
+
+```{r}
+preds <- factor(as.numeric(predict(model_nochol, 
+                                     newdata = heart, 
+                                     type = "response") > 0.5))
+
+confusionMatrix(table(preds, 
+                      heart$output), 
+                mode = "everything", 
+                positive = "1")
+```
+
+По матрице неопределенности мы видим, что верных классификаций в целом больше, чем неверных (и для TP, и для FP).
+В данном случае дисбаланса нет и метрика Accuracy применима и показывает достаточно высокое значение по верным классификациям: 0.84
+Sensitivity : 0.8848. Из всех людей с риском сердечного приступа модель смога выявить порядка 88%, что достаточно много.
+Specificity : 0.7899. Нулевая категория нас интересует в меньшей степени (у нас нет предприкторов "здоровья", есть только "болезни"), однако, значение здесь также неплохое. Модель выявляет почти 80% из тех, у кого нет повышенного риска.
+Precision : 0.8343. Данная мера фокусируется на ошибочной диагностике. Значение чуть меньше, чем для Sensitivity. У модели есть небольшая склонность присваивать 1 тем, у кого повышенного риска на самом деле нет, что потенциально ведет к гипердиагностике.
+F1 : 0.8588. В целом, модель находится на хорошем уровне, ни по одной и значимых метрик не пересекая 80% границу.
+
+
+
+# Кроссвалидация
+Построим цикл кроссвалидации.
+
+```{r задание 5}
+# Ваш код
+k_folds <- sample(1:10, size = 303, replace = TRUE)
+heart$fold <- k_folds
+
+Accuracy_m <- numeric(10)
+Sensitivity_m <- numeric(10)
+Specificity_m <- numeric(10)
+Precision_m <- numeric(10)
+F1_m <- numeric(10)
+
+for (i in 1:10) {
+  
+  test <- heart %>% filter(fold == i)
+  train <- heart %>% filter(fold != i)
+  
+  model_nochol <- glm(data = train, output ~ exng + trtbps + thalachh + sex + thall + oldpeak + cp, family = binomial(link = "logit"))
+  
+  preds <- factor(as.numeric(predict(model_nochol, 
+                                     newdata = test, 
+                                     type = "response") > 0.5))
+  
+  cc <- confusionMatrix(table(preds, 
+                      test$output), 
+                mode = "everything", 
+                positive = "1")
+  Accuracy_m[i] <- cc[["overall"]][["Accuracy"]]
+  Sensitivity_m[i] <- cc[["byClass"]][["Sensitivity"]]
+  Specificity_m[i] <- cc[["byClass"]][["Specificity"]]
+  Precision_m[i] <- cc[["byClass"]][["Precision"]]
+  F1_m[i] <- cc[["byClass"]][["F1"]]
+
+}
+
+
+```
+
+
+Расчитаем средние значения по метрикам.
+
+```{r}
+mean(Accuracy_m)
+mean(Sensitivity_m)
+mean(Specificity_m)
+mean(Precision_m)
+mean(F1_m)
+```
+Общая метрика Accuracy снизилась с 0.84 до 0.81
+Метрика Sensitivity снизилась с 0.88 до 0.85
+Метрика Specificity снизилась с 0.79 до 0.75
+Метрика Precision снизилась с 0.83 до 0.81
+Метрика F1 снизилась с 0.858 до 0.83
+
+В целом какого-то драматического падения значений мы не видим. Форма модели подтвердила свою состоятельность.
+
+
+**Для самостоятельной работы:**
+
+*Задание 1: Самостоятельно попробуйте улучшить модель, используя блок с преобразованиями переменных, которые не были распределены нормально (см. начало документа). Попробуйте включить их в модель и оцените, насколько лучше она получается по сравнению с построенной выше.*
+
+```{r задание N}
+# Ваш код
+```
+
+
