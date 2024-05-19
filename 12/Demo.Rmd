@@ -1,7 +1,6 @@
 ---
-title: "Untitled"
+title: "Демонстрация возможного алгоритма работы с данными для выяления закономерностей и подборки формы модели"
 output: html_document
-date: "2024-05-18"
 ---
 
 ```{r}
@@ -13,7 +12,9 @@ library(caret)
 library(memisc)
 ```
 
-
+```{r}
+set.seed(2024)
+```
 
 
 ```{r}
@@ -67,6 +68,7 @@ heart <- heart %>%
 str(heart)
 ```
 
+Пропусков в данных нет и визуально мы их не видим.
 
 ```{r}
 sum(is.na(heart))
@@ -88,12 +90,14 @@ ggpairs(heart)
 
 ## Числовые переменные
 
+Посмотрим на статистики для числовых переменных
 ```{r}
 heart %>% 
   dplyr::select(where(is.numeric)) %>% 
   describe()
 ```
 
+Визуализируем числовые переменные.
 ```{r}
 heart %>% 
   dplyr::select(where(is.numeric)) %>% 
@@ -125,7 +129,7 @@ heart %>%
 ```
 Данные не распределены нормально, что и было видно визуально.
 
-
+Попробуем провести преобразования в зависимости от той формы, что мы видим на графике.
 ```{r}
 # трансформация для переменных с правосторонним скосом
 shapiro.test(log(heart$trtbps))
@@ -184,13 +188,14 @@ heart %>%
 
 ## Факторные переменные
 
+Посмотрим на статистики для факторных переменных
 ```{r}
 heart %>% 
   dplyr::select(!where(is.numeric)) %>% 
   summary()
 ```
 
-
+Визуализируем факторные переменные
 ```{r}
 heart %>% 
   dplyr::select(where(is.factor)) %>%
@@ -214,9 +219,6 @@ heart %>%
        title = "Столбчатые диаграммы") +
   theme_minimal()
 ```
-
-
-
 
 Для формальной проверки независимости значений факторных переменных можно использовать тест Хи-квадрат. Нулевая гипотеза предполагает отсутствие зависимости между переменными.
 
@@ -302,11 +304,15 @@ mtable(bw_model, model_nothall, model_nochol, model_nothallchol, fw_model, full,
 По метрике AIC: model_nochol (253.416)
 По метрике Log-likelihood: model_nochol (114.708)
 
+Однако, в дальнейшем целесообразно использовать model_nothallchol, поскольку в ней удалены незначимые предикторы.
 
-Посмотрим на модели с точки зрения мер точности. Для этого получим предсказания.
+
+Посмотрим на модели с точки зрения мер точности. Оставим только значимые предикторы и получим предсказания.
 
 ```{r}
-preds <- factor(as.numeric(predict(model_nochol, 
+
+
+preds <- factor(as.numeric(predict(model_nothallchol, 
                                      newdata = heart, 
                                      type = "response") > 0.5))
 
@@ -317,19 +323,18 @@ confusionMatrix(table(preds,
 ```
 
 По матрице неопределенности мы видим, что верных классификаций в целом больше, чем неверных (и для TP, и для FP).
-В данном случае дисбаланса нет и метрика Accuracy применима и показывает достаточно высокое значение по верным классификациям: 0.84
-Sensitivity : 0.8848. Из всех людей с риском сердечного приступа модель смога выявить порядка 88%, что достаточно много.
-Specificity : 0.7899. Нулевая категория нас интересует в меньшей степени (у нас нет предприкторов "здоровья", есть только "болезни"), однако, значение здесь также неплохое. Модель выявляет почти 80% из тех, у кого нет повышенного риска.
-Precision : 0.8343. Данная мера фокусируется на ошибочной диагностике. Значение чуть меньше, чем для Sensitivity. У модели есть небольшая склонность присваивать 1 тем, у кого повышенного риска на самом деле нет, что потенциально ведет к гипердиагностике.
-F1 : 0.8588. В целом, модель находится на хорошем уровне, ни по одной и значимых метрик не пересекая 80% границу.
+В данном случае дисбаланса нет и метрика Accuracy применима и показывает достаточно высокое значение по верным классификациям: 0.82
+Sensitivity : 0.8788. Из всех людей с риском сердечного приступа модель смога выявить порядка 88%, что достаточно много.
+Specificity : 0.7609. Нулевая категория нас интересует в меньшей степени (у нас нет предприкторов "здоровья", есть только "болезни"), однако, значение здесь также неплохое. Модель выявляет почти 80% из тех, у кого нет повышенного риска.
+Precision : 0.8146. Данная мера фокусируется на ошибочной диагностике. Значение чуть меньше, чем для Sensitivity. У модели есть небольшая склонность присваивать 1 тем, у кого повышенного риска на самом деле нет, что потенциально ведет к гипердиагностике.
+F1 : 0.8455. В целом, модель находится на хорошем уровне, ни по одной и значимых метрик не пересекая 80% границу.
 
 
 
 # Кроссвалидация
 Построим цикл кроссвалидации.
 
-```{r задание 5}
-# Ваш код
+```{r crossval}
 k_folds <- sample(1:10, size = 303, replace = TRUE)
 heart$fold <- k_folds
 
@@ -344,9 +349,9 @@ for (i in 1:10) {
   test <- heart %>% filter(fold == i)
   train <- heart %>% filter(fold != i)
   
-  model_nochol <- glm(data = train, output ~ exng + trtbps + thalachh + sex + thall + oldpeak + cp, family = binomial(link = "logit"))
+  model_nochol_cv <- glm(data = train, output ~ exng + trtbps + thalachh + sex + oldpeak + cp, family = binomial(link = "logit"))
   
-  preds <- factor(as.numeric(predict(model_nochol, 
+  preds <- factor(as.numeric(predict(model_nochol_cv, 
                                      newdata = test, 
                                      type = "response") > 0.5))
   
@@ -375,21 +380,112 @@ mean(Specificity_m)
 mean(Precision_m)
 mean(F1_m)
 ```
-Общая метрика Accuracy снизилась с 0.84 до 0.81
-Метрика Sensitivity снизилась с 0.88 до 0.85
-Метрика Specificity снизилась с 0.79 до 0.75
-Метрика Precision снизилась с 0.83 до 0.81
-Метрика F1 снизилась с 0.858 до 0.83
+Общая метрика Accuracy снизилась с 0.82 до 0.80
+Метрика Sensitivity снизилась с 0.88 до 0.86
+Метрика Specificity снизилась с 0.76 до 0.75
+Метрика Precision не изменилась с 0.81 до 0.8
+Метрика F1 снизилась с 0.845 до 0.82
 
 В целом какого-то драматического падения значений мы не видим. Форма модели подтвердила свою состоятельность.
 
+```{r}
+summary(model_nothallchol)
+```
+
+Коэффициенты логит модели в чистом виде могут интерпретироваться как логарифмы шансов выявления заболевания. Чтобы получить значения самих шансов, необходимо экспоненцировать значения коэффициентов и вычесть 1.
+
+```{r}
+exp(coef(model_nothallchol)) - 1
+```
+
+
+# Самостоятельная работа
 
 **Для самостоятельной работы:**
 
 *Задание 1: Самостоятельно попробуйте улучшить модель, используя блок с преобразованиями переменных, которые не были распределены нормально (см. начало документа). Попробуйте включить их в модель и оцените, насколько лучше она получается по сравнению с построенной выше.*
 
-```{r задание N}
+```{r задание 1}
 # Ваш код
+
+
+
+
 ```
 
+
+
+# Пример решения
+
+Вариант 1. Добавили логарифм от chol.
+
+```{r}
+model_new1 <- glm(data = heart, output ~ exng + trtbps + thalachh + sex + oldpeak + cp + log(chol), family = binomial(link = "logit"))
+summary(model_new1)
+```
+Логарифм холостерина стал значимы, AIC уменьшилось.
+
+
+Вариант 2. Добавить квадрат или результат Бокс-Кокс трансформации в модель.
+```{r}
+heart$sq_thalachh <- heart$thalachh^2
+model_new2 <- glm(data = heart, output ~ exng + trtbps + thalachh + sex + oldpeak + cp + log(chol) + sq_thalachh, family = binomial(link = "logit"))
+summary(model_new2)
+```
+
+Переменная оказалась незначимой.
+
+
+Далее, рассмотрим качество model_new1.
+
+```{r}
+
+Accuracy_m_alt <- numeric(10)
+Sensitivity_m_alt <- numeric(10)
+Specificity_m_alt <- numeric(10)
+Precision_m_alt <- numeric(10)
+F1_m_alt <- numeric(10)
+
+for (i in 1:10) {
+  
+  test <- heart %>% filter(fold == i)
+  train <- heart %>% filter(fold != i)
+  
+  model_new1 <- glm(data = train, output ~ exng + trtbps + thalachh + sex + oldpeak + cp + log(chol), family = binomial(link = "logit"))
+  
+  preds <- factor(as.numeric(predict(model_new1, 
+                                     newdata = test, 
+                                     type = "response") > 0.5))
+  
+  cc <- confusionMatrix(table(preds, 
+                      test$output), 
+                mode = "everything", 
+                positive = "1")
+  Accuracy_m_alt[i] <- cc[["overall"]][["Accuracy"]]
+  Sensitivity_m_alt[i] <- cc[["byClass"]][["Sensitivity"]]
+  Specificity_m_alt[i] <- cc[["byClass"]][["Specificity"]]
+  Precision_m_alt[i] <- cc[["byClass"]][["Precision"]]
+  F1_m_alt[i] <- cc[["byClass"]][["F1"]]
+
+}
+```
+
+```{r}
+mean(Accuracy_m_alt)
+mean(Sensitivity_m_alt)
+mean(Specificity_m_alt)
+mean(Precision_m_alt)
+mean(F1_m_alt)
+```
+
+Общая метрика Accuracy 0.8 vs 0.8
+Sensitivity 0.86 vs 0.85
+Specificity 0.75 vs 0.76
+Precision 0.8 vs 0.8
+F1 0.82 vs 0.82
+
+* могут быть чуть разные результаты
+
+
+Далее можно исследовать взимодействие между предикторами и пытаться улучшить качество модели таким способом либо изучить новые алгоритмы (Classification Trees, Support vector machines, XGBoost).
 
